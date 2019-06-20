@@ -60,6 +60,14 @@ final class DisplayDetection: NSObject {
         //   may or may not be powered on !) and get most information needed
         // - Through NSScreen to get the backingScaleFactor (retinaness of a screen)
 
+        debugLog("read only test : ")
+        do {
+            let sfile = try String(contentsOfFile: "/Users/glouel/test.txt", encoding: .utf8)
+            debugLog(sfile)
+        } catch {
+            debugLog("error read only test")
+        }
+
         debugLog("***Display Detection***")
         // Cleanup a bit in case of redetection
         screens = [Screen]()
