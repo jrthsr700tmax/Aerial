@@ -40,6 +40,8 @@ final class AerialView: ScreenSaverView, CAAnimationDelegate {
 
     var brightnessToRestore: Float?
 
+    var lastTextLayerAnimationEnding: Double = -1
+
     static var shouldFade: Bool {
         let preferences = Preferences.sharedInstance
         return (preferences.fadeMode != Preferences.FadeMode.disabled.rawValue)
@@ -573,6 +575,8 @@ final class AerialView: ScreenSaverView, CAAnimationDelegate {
             AerialView.previewPlayer = player
         }
 
+        self.lastTextLayerAnimationEnding = -1
+
         debugLog("\(self.description) Setting player for all player layers in \(AerialView.sharedViews)")
         for view in AerialView.sharedViews {
             view.playerLayer.player = player
@@ -647,35 +651,82 @@ final class AerialView: ScreenSaverView, CAAnimationDelegate {
         player.actionAtItemEnd = AVPlayer.ActionAtItemEnd.none
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     override func keyDown(with event: NSEvent) {
         debugLog("keyDown")
         let preferences = Preferences.sharedInstance
 
-        if preferences.allowSkips {
-            if event.keyCode == 124 {
-                if !isQuickFading {
-                    // If we share, just call this on our main view
-                    if AerialView.sharingPlayers {
-                        // The first view with the player gets the fade and the play next instruction,
-                        // it controls the others
-                        AerialView.sharedViews.first!.fastFadeOut(andPlayNext: true)
-                        for view in AerialView.sharedViews where AerialView.sharedViews.first != view {
-                            view.fastFadeOut(andPlayNext: false)
-                        }
-                    } else {
-                        // If we do independant playback we have to skip all views
-                        for view in AerialView.instanciatedViews {
-                            view.fastFadeOut(andPlayNext: true)
-                        }
+        if preferences.allowSkips && event.keyCode == 124 {
+            if !isQuickFading {
+                // If we share, just call this on our main view
+                if AerialView.sharingPlayers {
+                    // The first view with the player gets the fade and the play next instruction,
+                    // it controls the others
+                    AerialView.sharedViews.first!.fastFadeOut(andPlayNext: true)
+                    for view in AerialView.sharedViews where AerialView.sharedViews.first != view {
+                        view.fastFadeOut(andPlayNext: false)
                     }
                 } else {
-                    debugLog("Right arrow key currently locked")
+                    // If we do independant playback we have to skip all views
+                    for view in AerialView.instanciatedViews {
+                        view.fastFadeOut(andPlayNext: true)
+                    }
                 }
             } else {
-                self.nextResponder!.keyDown(with: event)
-                //super.keyDown(with: event)
+                debugLog("Right arrow key currently locked")
             }
-        } else {
+        } else if preferences.showDescriptionsMode != Preferences.DescriptionMode.always.rawValue &&
+            preferences.showDescriptionsOnKeypress &&
+            event.keyCode == 42 {
+                if !isQuickFading {
+
+                    let poiStringProvider = PoiStringProvider.sharedInstance
+                    let video = self.currentVideo!
+                    let player = self.player!
+
+                    if (!video.poi.isEmpty && poiStringProvider.loadedDescriptions) ||
+                            (preferences.useCommunityDescriptions && !video.communityPoi.isEmpty &&
+                                !poiStringProvider.getPoiKeys(video: video).isEmpty) {
+                        // Collect all the timestamps from the JSON
+                        var times = [NSValue]()
+                        let keys = poiStringProvider.getPoiKeys(video: video)
+
+                        for pkv in keys {
+                            let timeStamp = Double(pkv.key)!
+                            times.append(NSValue(time: CMTime(seconds: timeStamp, preferredTimescale: 1)))
+                        }
+                        // The JSON isn't sorted so we fix that
+                        times.sort(by: { ($0 as! CMTime).seconds < ($1 as! CMTime).seconds })
+
+                        self.setupCurrentTextLayer(times: times, player: player, video: video, keypress: true)
+                    } else {
+                        // We don't have any extended description, using Secondary name (location) or video name (City)
+                        let str: String
+                        if video.secondaryName != "" {
+                            str = video.secondaryName
+                        } else {
+                            str = video.name
+                        }
+                        var fadeAnimation: CAKeyframeAnimation
+
+                        if preferences.showDescriptionsMode == Preferences.DescriptionMode.fade10seconds.rawValue {
+                            fadeAnimation = createFadeInOutAnimation(duration: 11)
+                        } else {
+                            // Always show mode, use known video duration or some hardcoded duration
+                            if video.duration > 0 {
+                                fadeAnimation = createFadeInOutAnimation(duration: video.duration - 1)
+                            } else {
+                                // We should have the duration, if we don't, hardcode the longest known duration
+                                fadeAnimation = createFadeInOutAnimation(duration: 807)
+                            }
+                        }
+                        self.textLayer.add(fadeAnimation, forKey: "textfade")
+                        setupTextLayer(string: str, duration: fadeAnimation.duration, isInitial: true, totalDuration: video.duration)
+                    }
+                } else {
+                    debugLog("Backslash key currently locked")
+                }
+            } else {
             self.nextResponder?.keyDown(with: event)
             //super.keyDown(with: event)
         }
@@ -736,7 +787,6 @@ final class AerialView: ScreenSaverView, CAAnimationDelegate {
         }
     }
 
-    // swiftlint:disable:next cyclomatic_complexity
     private func addDescriptions(player: AVPlayer, video: AerialVideo) {
         let poiStringProvider = PoiStringProvider.sharedInstance
         let preferences = Preferences.sharedInstance
@@ -776,65 +826,21 @@ final class AerialView: ScreenSaverView, CAAnimationDelegate {
                     }
                 }
 
+                self.lastTextLayerAnimationEnding = player.currentTime().seconds + fadeAnimation.duration
                 self.textLayer.add(fadeAnimation, forKey: "textfade")
+                var totalDuration: Double
                 if video.duration > 0 {
-                    setupTextLayer(string: str, duration: fadeAnimation.duration, isInitial: true, totalDuration: video.duration - 1)
+                    totalDuration = video.duration - 1
                 } else {
-                    setupTextLayer(string: str, duration: fadeAnimation.duration, isInitial: true, totalDuration: 807)
+                    totalDuration = 807
                 }
+                setupTextLayer(string: str, duration: fadeAnimation.duration, isInitial: true, totalDuration: totalDuration)
 
                 let mainQueue = DispatchQueue.main
 
                 // We then callback for each timestamp
                 timeObserver = player.addBoundaryTimeObserver(forTimes: times, queue: mainQueue) {
-                    var isLastTimeStamp = true
-                    var intervalUntilNextTimeStamp = 0.0
-
-                    // find closest timestamp to when we're waking up
-                    var closest = 1000.0
-                    var closestTime = 0.0
-                    var closestTimeValue: NSValue = NSValue(time: CMTime.zero)
-
-                    for time in times {
-                        let ts = (time as! CMTime).seconds
-                        let distance = abs(ts - player.currentTime().seconds)
-                        if distance < closest {
-                            closest = distance
-                            closestTime = ts
-                            closestTimeValue = time
-                        }
-                    }
-
-                    // We also need the next timeStamp
-                    let index = times.firstIndex(of: closestTimeValue)
-                    if index! < times.count - 1 {
-                        isLastTimeStamp = false
-                        intervalUntilNextTimeStamp = (times[index!+1] as! CMTime).seconds - closestTime - 1
-                    } else if video.duration > 0 {
-                        isLastTimeStamp = true
-                        // If we have a duration for the video, we may not !
-                        intervalUntilNextTimeStamp = video.duration - closestTime - 1
-                    }
-
-                    // Animate text
-                    var fadeAnimation: CAKeyframeAnimation
-
-                    if preferences.showDescriptionsMode == Preferences.DescriptionMode.fade10seconds.rawValue {
-                        fadeAnimation = self.createFadeInOutAnimation(duration: 11)
-                    } else {
-                        if isLastTimeStamp, video.duration == 0 {
-                            // We have no idea when the video ends, so 2 minutes it is
-                            fadeAnimation = self.createFadeInOutAnimation(duration: 120)
-                        } else {
-                            fadeAnimation = self.createFadeInOutAnimation(duration: intervalUntilNextTimeStamp)
-                        }
-                    }
-                    // Get the string for the current timestamp
-                    let key = String(format: "%.0f", closestTime)
-                    let str = poiStringProvider.getString(key: keys[key]!, video: video)
-                    self.setupTextLayer(string: str, duration: fadeAnimation.duration, isInitial: false, totalDuration: video.duration-1)
-
-                    self.textLayer.add(fadeAnimation, forKey: "textfade")
+                    self.setupCurrentTextLayer(times: times, player: player, video: video, keypress: false)
                 }
             } else {
                 // We don't have any extended description, using Secondary name (location) or video name (City)
@@ -857,10 +863,79 @@ final class AerialView: ScreenSaverView, CAAnimationDelegate {
                         fadeAnimation = createFadeInOutAnimation(duration: 807)
                     }
                 }
+                self.lastTextLayerAnimationEnding = player.currentTime().seconds + fadeAnimation.duration
                 self.textLayer.add(fadeAnimation, forKey: "textfade")
                 setupTextLayer(string: str, duration: fadeAnimation.duration, isInitial: true, totalDuration: video.duration)
             }
         }
+    }
+
+    func setupCurrentTextLayer(times: [NSValue], player: AVPlayer, video: AerialVideo, keypress: Bool) {
+        let poiStringProvider = PoiStringProvider.sharedInstance
+        let preferences = Preferences.sharedInstance
+
+        let keys = poiStringProvider.getPoiKeys(video: video)
+        if keypress && player.currentTime().seconds < self.lastTextLayerAnimationEnding {
+            return
+        }
+
+        var totalDuration: Double
+        if video.duration > 0 {
+            totalDuration = video.duration - 1
+        } else {
+            totalDuration = 807
+        }
+
+        var isLastTimeStamp = true
+        var intervalUntilNextTimeStamp = 0.0
+
+        // find closest timestamp to when we're waking up
+        var closest = 1000.0
+        var closestTime = 0.0
+        var closestTimeValue: NSValue = NSValue(time: CMTime.zero)
+
+        for time in times {
+            let ts = (time as! CMTime).seconds
+            let distance = abs(ts - player.currentTime().seconds)
+            if distance < closest {
+                closest = distance
+                closestTime = ts
+                closestTimeValue = time
+            }
+        }
+
+        // We also need the next timeStamp
+        let index = times.firstIndex(of: closestTimeValue)
+        if index! < times.count - 1 {
+            isLastTimeStamp = false
+            intervalUntilNextTimeStamp = (times[index!+1] as! CMTime).seconds - closestTime - 1
+        } else if video.duration > 0 {
+            isLastTimeStamp = true
+            // If we have a duration for the video, we may not !
+            intervalUntilNextTimeStamp = video.duration - closestTime - 1
+        }
+
+        // Animate text
+        var fadeAnimation: CAKeyframeAnimation
+
+        if preferences.showDescriptionsMode == Preferences.DescriptionMode.fade10seconds.rawValue {
+            fadeAnimation = self.createFadeInOutAnimation(duration: 11)
+        } else {
+            if isLastTimeStamp, video.duration == 0 {
+                // We have no idea when the video ends, so 2 minutes it is
+                fadeAnimation = self.createFadeInOutAnimation(duration: 120)
+            } else {
+                fadeAnimation = self.createFadeInOutAnimation(duration: intervalUntilNextTimeStamp)
+            }
+        }
+        // Get the string for the current timestamp
+        let key = String(format: "%.0f", closestTime)
+        let str = poiStringProvider.getString(key: keys[key]!, video: video)
+        let isInitial = (keypress && self.lastTextLayerAnimationEnding == -1)
+        self.lastTextLayerAnimationEnding = player.currentTime().seconds + fadeAnimation.duration
+        self.setupTextLayer(string: str, duration: fadeAnimation.duration, isInitial: isInitial, totalDuration: totalDuration)
+
+        self.textLayer.add(fadeAnimation, forKey: "textfade")
     }
 
     func setupTextLayer(string: String, duration: CFTimeInterval, isInitial: Bool, totalDuration: Double) {

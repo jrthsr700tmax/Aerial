@@ -1,4 +1,6 @@
-![screencast](https://cloud.githubusercontent.com/assets/499192/10754100/c0e1cc4c-7c95-11e5-9d3b-842d3acc2fd5.gif)
+<p align="center">
+  <img src="https://cloud.githubusercontent.com/assets/499192/10754100/c0e1cc4c-7c95-11e5-9d3b-842d3acc2fd5.gif">
+</p>
 
 # Aerial - Apple TV Aerial Views Screen Saver
 
@@ -22,6 +24,8 @@ Starting with version 1.4, Aerial is also maintained by [Guillaume Louel](https:
 You can see a list of contributors [here](https://github.com/JohnCoates/Aerial/graphs/contributors).
 
 ## Installation
+
+**Warning :** Are you using or planning to install 10.15 beta ? If so check [this issue](https://github.com/JohnCoates/Aerial/issues/801) for more information about the current status of Aerial on macOS 10.15 and progress.
 
 Aerial now includes an auto-update mechanism using the [Sparkle open-source project](https://github.com/sparkle-project/Sparkle). You will need to download it manually the first time :
 

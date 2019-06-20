@@ -53,9 +53,13 @@ extension PreferencesWindowController {
         }
         if preferences.showDescriptions {
             showDescriptionsCheckbox.state = .on
-            changeTextState(to: true)
-        } else {
-            changeTextState(to: false)
+        }
+        if preferences.showDescriptionsOnKeypress {
+            showDescriptionsOnKeypressCheckbox.state = .on
+        }
+        changeTextState(to: (preferences.showDescriptions||preferences.showDescriptionsOnKeypress))
+
+        if preferences.showDescriptionsMode == Preferences.DescriptionMode.always.rawValue { showDescriptionsOnKeypressCheckbox.isEnabled = false
         }
         if preferences.localizeDescriptions {
             localizeForTvOS12Checkbox.state = .on
@@ -135,7 +139,16 @@ extension PreferencesWindowController {
         preferences.showDescriptions = onState
         debugLog("UI showDescriptions: \(onState)")
 
-        changeTextState(to: onState)
+        changeTextState(to: (preferences.showDescriptions||preferences.showDescriptionsOnKeypress))
+    }
+
+    @IBAction func showDescriptionsOnKeypressClick(button: NSButton?) {
+        let state = showDescriptionsOnKeypressCheckbox.state
+        let onState = state == .on
+        preferences.showDescriptionsOnKeypress = onState
+        debugLog("UI showDescriptionsOnKeypress \(onState)")
+
+        changeTextState(to: (preferences.showDescriptions||preferences.showDescriptionsOnKeypress))
     }
 
     func changeTextState(to: Bool) {
@@ -199,6 +212,11 @@ extension PreferencesWindowController {
     @IBAction func descriptionModePopupChange(_ sender: NSPopUpButton) {
         debugLog("UI descriptionMode: \(sender.indexOfSelectedItem)")
         preferences.showDescriptionsMode = sender.indexOfSelectedItem
+        // Disable Keypress checkbox on "Always"
+        if preferences.showDescriptionsMode == Preferences.DescriptionMode.always.rawValue { showDescriptionsOnKeypressCheckbox.isEnabled = false
+        } else {
+            showDescriptionsOnKeypressCheckbox.isEnabled = true
+        }
         preferences.synchronize()
     }
 
